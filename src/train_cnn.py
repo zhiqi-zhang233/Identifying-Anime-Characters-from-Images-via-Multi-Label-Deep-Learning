@@ -57,12 +57,12 @@ def evaluate_model(model, dataloader, device, threshold=0.5):
     with torch.no_grad():
         for images, labels in dataloader:
 
-            # Skip missing images
-            if images == "skip":
+            # SAFE skip check
+            if isinstance(images, str) and images == "skip":
                 continue
 
             images = images.to(device)
-            labels_np = labels.numpy()
+            labels_np = labels.numpy()  # keep GT on CPU
 
             logits = model(images)
             probs = torch.sigmoid(logits).cpu().numpy()
@@ -72,7 +72,7 @@ def evaluate_model(model, dataloader, device, threshold=0.5):
 
     if len(y_true_list) == 0:
         print("[WARNING] No valid images in validation set!")
-        return { "f1_micro": 0 }
+        return {"f1_micro": 0}
 
     return evaluate_multilabel(y_true_list, y_prob_list, threshold=threshold)
 
@@ -90,23 +90,23 @@ def train_cnn(
     threshold=0.5,
     device=None
 ):
-    # Fix CSV (remove folder prefix)
+    # Fix CSV
     csv_path = fix_filenames(csv_path)
 
-    # Create results folder
+    # Result directory
     os.makedirs(results_dir, exist_ok=True)
 
-    # Auto device
+    # Device
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    # Save tag indices mapping
+    # Tag mapping path
     tag_json_path = os.path.join(results_dir, "tag_to_idx.json")
 
-    # =====================================
-    # Load Datasets
-    # =====================================
+    # =====================================================
+    # Load dataset
+    # =====================================================
     train_dataset = AnimeTagDataset(
         csv_path=csv_path,
         img_root=img_root,
@@ -121,7 +121,7 @@ def train_cnn(
         split="val",
         transform=val_transform,
         tag_json_path=tag_json_path,
-        tag_to_idx=train_dataset.tag_to_idx,
+        tag_to_idx=train_dataset.tag_to_idx,  # important
     )
 
     num_tags = train_dataset.num_tags
@@ -130,9 +130,9 @@ def train_cnn(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-    # =====================================
-    # Model: ResNet18
-    # =====================================
+    # =====================================================
+    # Model setup
+    # =====================================================
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
     model.fc = nn.Linear(model.fc.in_features, num_tags)
     model = model.to(device)
@@ -146,20 +146,19 @@ def train_cnn(
     train_losses = []
     val_f1_scores = []
 
-    # =====================================
-    # Training Loop
-    # =====================================
+    # =====================================================
+    # Training loop
+    # =====================================================
     for epoch in range(1, epochs + 1):
         model.train()
         running_loss = 0.0
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}", ncols=100)
-        for batch in pbar:
 
-            images, labels = batch
+        for images, labels in pbar:
 
-            # Skip missing images
-            if images == "skip":
+            # SAFELY skip corrupted/missing images
+            if isinstance(images, str) and images == "skip":
                 continue
 
             images = images.to(device)
@@ -175,27 +174,27 @@ def train_cnn(
             running_loss += loss.item()
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
-        avg_loss = running_loss / max(1, len(train_loader))
+        avg_loss = running_loss / len(train_loader)
         train_losses.append(avg_loss)
 
-        # =====================================
+        # =====================================================
         # Validation
-        # =====================================
+        # =====================================================
         metrics = evaluate_model(model, val_loader, device, threshold)
         val_f1 = metrics["f1_micro"]
         val_f1_scores.append(val_f1)
 
         print(f"\nEpoch {epoch}: Loss={avg_loss:.4f} | F1_micro={val_f1:.4f}")
 
-        # Save best model
+        # Save best
         if val_f1 > best_f1:
             best_f1 = val_f1
             torch.save(model.state_dict(), best_model_path)
-            print(f"[SAVE] New best model at epoch {epoch}: F1={val_f1:.4f}")
+            print(f"[SAVE] Best model updated at epoch {epoch}: F1={val_f1:.4f}")
 
-    # =====================================
-    # Save curves & metrics
-    # =====================================
+    # =====================================================
+    # Save curves
+    # =====================================================
     save_curve(train_losses, os.path.join(results_dir, "loss_curve.png"), ylabel="Loss")
     save_curve(val_f1_scores, os.path.join(results_dir, "f1_curve.png"), ylabel="F1_micro")
 
@@ -210,8 +209,8 @@ def train_cnn(
         indent=2
     )
 
-    print("\nTraining finished.")
-    print(f"Best model saved to: {best_model_path}")
+    print("\nTraining complete.")
+    print(f"Best model saved at: {best_model_path}")
 
 
 # ==========================================================
