@@ -2,7 +2,7 @@
 
 import os
 import json
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
@@ -13,6 +13,9 @@ from PIL import Image
 # Build tag index
 # ==========================================================
 def build_tag_index_from_csv(csv_path: str, min_freq: int = 1) -> Dict[str, int]:
+    """
+    Build tag → index dictionary from CSV.
+    """
     df = pd.read_csv(csv_path)
 
     tag_freq = {}
@@ -42,84 +45,76 @@ def load_tag_index(json_path: str) -> Dict[str, int]:
 # ==========================================================
 # Split dataframe
 # ==========================================================
-def split_dataframe(df: pd.DataFrame, val_ratio: float = 0.1, test_ratio: float = 0.1, random_seed: int = 42):
+def split_dataframe(df: pd.DataFrame, val_ratio=0.1, test_ratio=0.1, random_seed=42):
+    """
+    Random shuffle + split into train/val/test
+    """
     assert val_ratio + test_ratio < 1
 
+    df = df.sample(frac=1.0, random_state=random_seed).reset_index(drop=True)
     N = len(df)
-    shuffled_idx = df.sample(frac=1.0, random_state=random_seed).index.tolist()
 
     n_val = int(N * val_ratio)
     n_test = int(N * test_ratio)
-    n_train = N - n_val - n_test
 
-    train_df = df.loc[shuffled_idx[:n_train]].reset_index(drop=True)
-    val_df = df.loc[shuffled_idx[n_train:n_train+n_val]].reset_index(drop=True)
-    test_df = df.loc[shuffled_idx[n_train+n_val:]].reset_index(drop=True)
+    train_df = df.iloc[:-n_val - n_test]
+    val_df = df.iloc[-n_val - n_test:-n_test]
+    test_df = df.iloc[-n_test:]
 
-    return train_df, val_df, test_df
+    return train_df.reset_index(drop=True), val_df.reset_index(drop=True), test_df.reset_index(drop=True)
 
 
 # ==========================================================
 # Dataset class
 # ==========================================================
 class AnimeTagDataset(Dataset):
+    """
+    Dataset that loads anime character images + multi-label tags.
+    With safe image loading (missing images → skip).
+    """
 
     def __init__(
         self,
         csv_path: str,
         img_root: str,
-        split: str = "train",
+        split="train",
         transform=None,
-        tag_to_idx: Optional[Dict[str, int]] = None,
-        tag_json_path: Optional[str] = None,
-        min_tag_freq: int = 1,
-        val_ratio: float = 0.1,
-        test_ratio: float = 0.1,
-        random_seed: int = 42,
+        tag_to_idx=None,
+        tag_json_path=None,
+        min_tag_freq=1,
+        val_ratio=0.1,
+        test_ratio=0.1,
+        random_seed=42,
     ):
-        """
-        Args:
-            csv_path     : filtered_labels_fixed.csv
-            img_root     : images folder
-            split        : train / val / test
-            transform    : transform function
-            tag_to_idx   : pass train mapping to val/test for consistency
-            tag_json_path: save/load json for reproducibility
-        """
         self.csv_path = csv_path
         self.img_root = img_root
         self.transform = transform
 
         # ------------------------------------------------------
-        # Load full CSV
+        # Load CSV
         # ------------------------------------------------------
-        full_df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path)
 
         # ------------------------------------------------------
-        # Build or load tag_to_idx
+        # tag_to_idx mapping
         # ------------------------------------------------------
         if tag_to_idx is not None:
+            # val/test reuse mapping from train
             self.tag_to_idx = tag_to_idx
-
         else:
-            if tag_json_path is not None and os.path.exists(tag_json_path):
+            if tag_json_path and os.path.exists(tag_json_path):
                 self.tag_to_idx = load_tag_index(tag_json_path)
             else:
                 self.tag_to_idx = build_tag_index_from_csv(csv_path, min_freq=min_tag_freq)
-                if tag_json_path is not None:
+                if tag_json_path:
                     save_tag_index(self.tag_to_idx, tag_json_path)
 
         self.num_tags = len(self.tag_to_idx)
 
         # ------------------------------------------------------
-        # Data split
+        # Split the dataframe
         # ------------------------------------------------------
-        train_df, val_df, test_df = split_dataframe(
-            full_df,
-            val_ratio=val_ratio,
-            test_ratio=test_ratio,
-            random_seed=random_seed
-        )
+        train_df, val_df, test_df = split_dataframe(df, val_ratio, test_ratio, random_seed)
 
         if split == "train":
             self.df = train_df
@@ -128,46 +123,52 @@ class AnimeTagDataset(Dataset):
         elif split == "test":
             self.df = test_df
         else:
-            raise ValueError(f"Unknown split: {split}")
-
-    def __len__(self):
-        return len(self.df)
+            raise ValueError("split must be train/val/test")
 
     # ------------------------------------------------------
-    # Encode tags → multi-hot vector
+    # Encode a tag string into a multi-hot vector
     # ------------------------------------------------------
-    def _encode_tags(self, tags_str: str) -> torch.Tensor:
+    def _encode_tags(self, tags_str: str):
         labels = torch.zeros(self.num_tags, dtype=torch.float32)
 
         if isinstance(tags_str, str):
             for t in tags_str.split():
                 if t in self.tag_to_idx:
                     labels[self.tag_to_idx[t]] = 1.0
-
         return labels
 
     # ------------------------------------------------------
-    # IMPORTANT: Safe image loading (skip missing images)
+    # Safe __getitem__
     # ------------------------------------------------------
     def __getitem__(self, index: int):
+        """
+        Returns:
+            (image_tensor, labels_tensor)
+        Or if image missing:
+            ("skip", labels)
+        """
         row = self.df.iloc[index]
 
-        filename = row["filename"]
-        img_path = os.path.join(self.img_root, filename)
+        img_name = row["filename"]
+        img_path = os.path.join(self.img_root, img_name)
 
-        # --------------------------
-        # TRY TO LOAD IMAGE
-        # --------------------------
-        try:
-            image = Image.open(img_path).convert("RGB")
-        except Exception:
-            # → train loop will skip batches containing "skip"
-            return "skip", "skip"
-
-        # Apply transforms
-        if self.transform is not None:
-            image = self.transform(image)
-
+        # --- always encode tags first ---
         labels = self._encode_tags(row["tags"])
 
+        # --- safe load image ---
+        if not os.path.exists(img_path):
+            # let train loop skip this item
+            return "skip", labels
+
+        try:
+            image = Image.open(img_path).convert("RGB")
+        except:
+            return "skip", labels
+
+        if self.transform:
+            image = self.transform(image)
+
         return image, labels
+
+    def __len__(self):
+        return len(self.df)
