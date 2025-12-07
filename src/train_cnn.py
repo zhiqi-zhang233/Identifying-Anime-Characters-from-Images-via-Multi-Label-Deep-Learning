@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from dataset import AnimeTagDataset
 from transforms import train_transform, val_transform
 from evaluate import evaluate_multilabel
+import argparse
 
 
 # ===========================
@@ -40,7 +41,7 @@ def evaluate_model(model, dataloader, device, threshold=0.5):
     with torch.no_grad():
         for images, labels in dataloader:
             images = images.to(device)
-            labels_np = labels.numpy()  # ground truth
+            labels_np = labels.numpy()
 
             logits = model(images)
             probs = torch.sigmoid(logits).cpu().numpy()
@@ -60,24 +61,19 @@ def evaluate_model(model, dataloader, device, threshold=0.5):
 # 3. Main Training Function
 # ===========================
 def train_cnn(
-    csv_path="labels_combined.csv",
-    img_root="data/images",
-    results_dir="results/cnn",
-    epochs=10,
-    batch_size=32,
-    lr=1e-4,
-    threshold=0.5,
-    device=None
+    csv_path,
+    img_root,
+    results_dir,
+    epochs,
+    batch_size,
+    lr,
+    threshold,
+    device
 ):
-    # Create results directory
     os.makedirs(results_dir, exist_ok=True)
-
-    # Auto detect device
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    # Tag index save path
+    # tag index json file
     tag_json_path = os.path.join(results_dir, "tag_to_idx.json")
 
     # -------------------------
@@ -88,7 +84,7 @@ def train_cnn(
         img_root=img_root,
         split="train",
         transform=train_transform,
-        tag_json_path=tag_json_path,   # build or load tag_to_idx
+        tag_json_path=tag_json_path,
     )
 
     val_dataset = AnimeTagDataset(
@@ -96,16 +92,15 @@ def train_cnn(
         img_root=img_root,
         split="val",
         transform=val_transform,
-        tag_json_path=tag_json_path,   # ensure same tag_to_idx
-        tag_to_idx=train_dataset.tag_to_idx,  # explicitly share mapping
+        tag_json_path=tag_json_path,
+        tag_to_idx=train_dataset.tag_to_idx,
     )
 
     num_tags = train_dataset.num_tags
-    print(f"Number of tags (labels): {num_tags}")
+    print(f"Number of tags: {num_tags}")
 
-    # Create loaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    val_loader   = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     # -------------------------
     # Model setup (ResNet18)
@@ -114,13 +109,9 @@ def train_cnn(
     model.fc = nn.Linear(model.fc.in_features, num_tags)
     model = model.to(device)
 
-    # Loss & optimizer
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    # -------------------------
-    # Training loop
-    # -------------------------
     best_f1 = 0.0
     best_model_path = os.path.join(results_dir, "best_model.pt")
 
@@ -150,27 +141,23 @@ def train_cnn(
         avg_train_loss = running_loss / len(train_loader)
         train_losses.append(avg_train_loss)
 
-        # -------------------------
-        # Evaluate on validation set
-        # -------------------------
+        # Evaluate
         metrics = evaluate_model(model, val_loader, device, threshold)
         val_f1 = metrics["f1_micro"]
         val_f1_scores.append(val_f1)
 
-        print(f"\nEpoch {epoch} — Train Loss: {avg_train_loss:.4f}, "
-              f"Val F1_micro: {val_f1:.4f}")
+        print(f"\nEpoch {epoch} — Train Loss: {avg_train_loss:.4f}, Val F1_micro: {val_f1:.4f}")
 
-        # Save best model
         if val_f1 > best_f1:
             best_f1 = val_f1
             torch.save(model.state_dict(), best_model_path)
-            print(f"New best model saved at epoch {epoch}! F1_micro={val_f1:.4f}")
+            print(f"New best model saved (epoch {epoch}) F1_micro={val_f1:.4f}")
 
     # -------------------------
-    # Save curves & metrics
+    # Save results
     # -------------------------
-    save_curve(train_losses, os.path.join(results_dir, "loss_curve.png"), ylabel="Train Loss")
-    save_curve(val_f1_scores, os.path.join(results_dir, "f1_curve.png"), ylabel="Val F1_micro")
+    save_curve(train_losses, os.path.join(results_dir, "loss_curve.png"))
+    save_curve(val_f1_scores, os.path.join(results_dir, "f1_curve.png"))
 
     final_metrics = {
         "best_f1_micro": best_f1,
@@ -178,24 +165,48 @@ def train_cnn(
         "val_f1_scores": val_f1_scores,
         "threshold": threshold,
     }
-
     with open(os.path.join(results_dir, "metrics.json"), "w") as f:
         json.dump(final_metrics, f, indent=2)
 
     print("\nTraining complete.")
-    print(f"Best model saved to: {best_model_path}")
+    print(f"Best model saved at: {best_model_path}")
 
 
 # ===========================
-# 4. Entry point
+# 4. Argparse Entry Point
 # ===========================
+def auto_select_device():
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--csv_path", required=True, type=str)
+    parser.add_argument("--img_root", required=True, type=str)
+    parser.add_argument("--results_dir", default="results/cnn", type=str)
+    parser.add_argument("--epochs", default=10, type=int)
+    parser.add_argument("--batch_size", default=32, type=int)
+    parser.add_argument("--lr", default=1e-4, type=float)
+    parser.add_argument("--threshold", default=0.5, type=float)
+
+    args = parser.parse_args()
+
+    device = auto_select_device()
+
     train_cnn(
-        csv_path="labels_combined.csv",
-        img_root="data/images",
-        results_dir="results/cnn",
-        epochs=10,
-        batch_size=32,
-        lr=1e-4,
-        threshold=0.5,
+        csv_path=args.csv_path,
+        img_root=args.img_root,
+        results_dir=args.results_dir,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        threshold=args.threshold,
+        device=device
     )
+
