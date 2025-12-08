@@ -1,0 +1,22 @@
+{
+  "ahoge": 0,
+  "black_hair": 1,
+  "blonde_hair": 2,
+  "blue_hair": 3,
+  "braid": 4,
+  "brown_hair": 5,
+  "grey_hair": 6,
+  "hair_between_eyes": 7,
+  "hair_ornament": 8,
+  "long_hair": 9,
+  "multicolored_hair": 10,
+  "pink_hair": 11,
+  "ponytail": 12,
+  "purple_hair": 13,
+  "short_hair": 14,
+  "sidelocks": 15,
+  "streaked_hair": 16,
+  "twintails": 17,
+  "very_long_hair": 18,
+  "white_hair": 19
+}
