@@ -1,0 +1,45 @@
+# -----------------------------
+# Core deep learning libraries
+# -----------------------------
+torch==2.2.0+cu121
+torchvision==0.17.0+cu121
+torchaudio==2.2.0+cu121
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# -----------------------------
+# Data processing
+# -----------------------------
+numpy==1.26.4
+pandas==2.2.0
+scikit-learn==1.4.0
+
+# -----------------------------
+# Image loading & augmentation
+# -----------------------------
+opencv-python==4.9.0.80
+Pillow==10.2.0
+
+# -----------------------------
+# Jupyter / development
+# -----------------------------
+ipykernel==6.29.0
+jupyter==1.0.0
+notebook==7.0.6
+
+# -----------------------------
+# Visualization
+# -----------------------------
+matplotlib==3.8.2
+seaborn==0.13.1
+
+# -----------------------------
+# Utility libraries
+# -----------------------------
+tqdm==4.66.1
+pyyaml==6.0.1
+
+# -----------------------------
+# Optional (but recommended)
+# -----------------------------
+rich==13.7.0
+tensorboard==2.15.1
