@@ -149,10 +149,8 @@ class AnimeTagDataset(Dataset):
         """
         row = self.df.iloc[index]
 
-        # 原始文件名，例如 "solo_person3/5999590.jpg"
         orig_name = row["filename"]
 
-        # 拆出子目录名和纯文件名
         parts = orig_name.split("/")
         if len(parts) > 1:
             dir_name = parts[0]            # solo_person3
@@ -161,23 +159,17 @@ class AnimeTagDataset(Dataset):
             dir_name = ""
             base_name = orig_name
 
-        # 构造一系列“候选路径”，按顺序逐个尝试
         candidates = []
 
-        # 1) data/images/solo_person3/5999590.jpg  （严格按 CSV）
         candidates.append(os.path.join(self.img_root, orig_name))
 
-        # 2) data/images/solo_person3/_5999590.jpg
         if dir_name:
             candidates.append(os.path.join(self.img_root, dir_name, "_" + base_name))
 
-        # 3) data/images/5999590.jpg  （扁平目录，不带下划线）
         candidates.append(os.path.join(self.img_root, base_name))
 
-        # 4) data/images/_5999590.jpg （扁平目录，带下划线）
         candidates.append(os.path.join(self.img_root, "_" + base_name))
 
-        # 5) data/images/_solo_person3/5999590.jpg （以防有人那样命名）
         candidates.append(os.path.join(self.img_root, "_" + orig_name))
 
         img_path = None
@@ -188,11 +180,9 @@ class AnimeTagDataset(Dataset):
 
         labels = self._encode_tags(row["tags"])
 
-        # 所有候选路径都不存在，就跳过这个样本
         if img_path is None:
             return "skip", labels
 
-        # 尝试读取图片
         try:
             image = Image.open(img_path).convert("RGB")
         except Exception:
