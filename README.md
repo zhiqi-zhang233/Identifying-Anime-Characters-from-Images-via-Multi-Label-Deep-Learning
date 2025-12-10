@@ -1,6 +1,8 @@
 
 ```text
 project_root/
+  filtered_data
+    filtered_labels.csv # label tags
   data/
     images/           #raw images
   src/
